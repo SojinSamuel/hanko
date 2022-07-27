@@ -25,6 +25,7 @@ import {
   EmailValidationRequiredError,
   InvalidWebauthnCredentialError,
   RequestTimeoutError,
+  WebAuthnUnavailableError,
 } from "./Errors";
 
 import { isUserVerifyingPlatformAuthenticatorAvailable } from "./WebauthnSupport";
@@ -223,7 +224,7 @@ class UserClient extends AbstractClient {
   getInfo(email: string): Promise<UserInfo> {
     return new Promise<UserInfo>((resolve, reject) => {
       this.client
-        .post("/user", { email })
+        .post2("/user", { email })
         .then((response) => {
           if (response.ok) {
             return response.json();
@@ -296,11 +297,16 @@ class WebauthnClient extends AbstractClient {
     super(api, timeout);
     this.webAuthnManager = new WebAuthnManager();
   }
-
-  login(userID?: string): Promise<void> {
+  login(userInfo?: UserInfo): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      this.client
-        .post2("/webauthn/login/initialize", { user_id: userID })
+      if (userInfo && !userInfo.has_webauthn_credential) {
+        throw new WebAuthnUnavailableError(userInfo.id);
+      }
+
+      return this.client
+        .post2("/webauthn/login/initialize", {
+          user_id: userInfo?.id,
+        })
         .then((response) => {
           if (response.ok) {
             return response.json();
@@ -308,11 +314,14 @@ class WebauthnClient extends AbstractClient {
 
           throw new TechnicalError();
         })
+        .catch((e) => {
+          reject(e);
+        })
         .then((challenge: CredentialRequestOptionsJSON) => {
           return getWebauthnCredential(challenge);
         })
         .catch((e) => {
-          throw new WebAuthnRequestCancelledError(e);
+          throw new WebAuthnRequestCancelledError(userInfo?.id);
         })
         .then((assertion: PublicKeyCredentialWithAssertionJSON) => {
           return this.client.post2("/webauthn/login/finalize", assertion);

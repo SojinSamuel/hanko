@@ -24,9 +24,20 @@ class RequestTimeoutError extends HankoError {
 }
 
 class WebAuthnRequestCancelledError extends HankoError {
-  constructor(cause?: Error) {
+  userID?: string;
+  constructor(userID: string, cause?: Error) {
     super("Request cancelled error", "requestCancelled", cause);
+    this.userID = userID;
     Object.setPrototypeOf(this, WebAuthnRequestCancelledError.prototype);
+  }
+}
+
+class WebAuthnUnavailableError extends HankoError {
+  userID?: string;
+  constructor(userID?: string, cause?: Error) {
+    super("WebAuthn unavailable error", "webauthnUnavailable", cause);
+    this.userID = userID;
+    Object.setPrototypeOf(this, WebAuthnUnavailableError.prototype);
   }
 }
 
@@ -110,6 +121,7 @@ export {
   TechnicalError,
   RequestTimeoutError,
   WebAuthnRequestCancelledError,
+  WebAuthnUnavailableError,
   InvalidPasswordError,
   InvalidPasscodeError,
   InvalidWebauthnCredentialError,

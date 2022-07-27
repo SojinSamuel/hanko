@@ -2,13 +2,13 @@ import * as preact from "preact";
 import { useCallback, useContext, useEffect, useState } from "preact/compat";
 import { Fragment } from "preact";
 
-import { UserInfo } from "../../lib/HankoClient";
 import {
   HankoError,
   TechnicalError,
   NotFoundError,
   EmailValidationRequiredError,
   WebAuthnRequestCancelledError,
+  WebAuthnUnavailableError,
 } from "../../lib/Errors";
 
 import { TranslateContext } from "@denysvuika/preact-translate";
@@ -35,7 +35,6 @@ const LoginEmail = () => {
     renderRegisterConfirm,
   } = useContext(RenderContext);
 
-  const [userInfo, setUserInfo] = useState<UserInfo>(null);
   const [isPasskeyLoginLoading, setIsPasskeyLoginLoading] =
     useState<boolean>(false);
   const [isPasskeyLoginSuccess, setIsPasskeyLoginSuccess] =
@@ -63,22 +62,55 @@ const LoginEmail = () => {
     event.preventDefault();
     setIsEmailLoginLoading(true);
 
-    hanko.user
-      .getInfo(email)
-      .then((info) => setUserInfo(info))
-      .catch((e) => {
-        if (e instanceof NotFoundError) {
-          return renderRegisterConfirm();
-        } else if (e instanceof EmailValidationRequiredError) {
-          return renderPasscode(e.userID, config.password.enabled, true);
-        }
+    if (isAuthenticatorSupported) {
+      hanko.user
+        .getInfo(email)
+        .then((info) => {
+          return hanko.authenticator.login(info);
+        })
+        .then(() => {
+          setIsEmailLoginLoading(false);
+          setIsEmailLoginSuccess(true);
+          emitSuccessEvent();
 
-        throw e;
-      })
-      .catch((e) => {
-        setIsEmailLoginLoading(false);
-        setError(e);
-      });
+          return;
+        })
+        .catch((e) => {
+          if (e instanceof NotFoundError) {
+            renderRegisterConfirm();
+          } else if (e instanceof EmailValidationRequiredError) {
+            renderPasscode(e.userID, config.password.enabled, true);
+          } else if (
+            e instanceof WebAuthnUnavailableError ||
+            e instanceof WebAuthnRequestCancelledError
+          ) {
+            if (e.userID) {
+              renderAlternateLoginMethod(e.userID);
+            } else {
+              setIsEmailLoginLoading(false);
+            }
+          } else {
+            setIsEmailLoginLoading(false);
+            setError(e);
+          }
+        });
+    } else {
+      hanko.user
+        .getInfo(email)
+        .then((info) => {
+          return renderAlternateLoginMethod(info.id);
+        })
+        .catch((e) => {
+          if (e instanceof NotFoundError) {
+            renderRegisterConfirm();
+          } else if (e instanceof EmailValidationRequiredError) {
+            renderPasscode(e.userID, config.password.enabled, true);
+          } else {
+            setIsEmailLoginLoading(false);
+            setError(e);
+          }
+        });
+    }
   };
 
   const onWebAuthnSubmit = (event: Event) => {
@@ -100,19 +132,21 @@ const LoginEmail = () => {
       });
   };
 
-  const renderAlternateLoginMethod = useCallback(() => {
-    if (config.password.enabled) {
-      renderPassword(userInfo.id).catch((e) => {
+  const renderAlternateLoginMethod = useCallback(
+    (userID: string) => {
+      if (config.password.enabled) {
+        return renderPassword(userID).catch((e) => {
+          setIsEmailLoginLoading(false);
+          setError(e);
+        });
+      }
+      return renderPasscode(userID, false, false).catch((e) => {
         setIsEmailLoginLoading(false);
         setError(e);
       });
-    } else {
-      renderPasscode(userInfo.id, false, false).catch((e) => {
-        setIsEmailLoginLoading(false);
-        setError(e);
-      });
-    }
-  }, [config.password.enabled, renderPasscode, renderPassword, userInfo]);
+    },
+    [config.password.enabled, renderPasscode, renderPassword]
+  );
 
   useEffect(() => {
     hanko.authenticator
@@ -120,41 +154,6 @@ const LoginEmail = () => {
       .then((supported) => setIsAuthenticatorSupported(supported))
       .catch((e) => setError(new TechnicalError(e)));
   }, [hanko]);
-
-  // UserID has been resolved, decide what to do next.
-  useEffect(() => {
-    if (
-      userInfo === null ||
-      config === null ||
-      isAuthenticatorSupported === null
-    ) {
-      return;
-    }
-
-    if (userInfo.has_webauthn_credential && isAuthenticatorSupported) {
-      hanko.authenticator
-        .login(userInfo.id)
-        .then(() => {
-          setIsEmailLoginLoading(false);
-          setIsEmailLoginSuccess(true);
-          emitSuccessEvent();
-
-          return;
-        })
-        .catch(() => {
-          renderAlternateLoginMethod();
-        });
-    } else {
-      renderAlternateLoginMethod();
-    }
-  }, [
-    config,
-    emitSuccessEvent,
-    hanko.authenticator,
-    isAuthenticatorSupported,
-    renderAlternateLoginMethod,
-    userInfo,
-  ]);
 
   return (
     <Content>
